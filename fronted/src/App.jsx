@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   Mic,
   MonitorSpeaker,
@@ -12,8 +12,6 @@ import {
   Sparkles,
   NotebookPen,
   CheckCircle2,
-  AlertCircle,
-  Clock3,
   AudioLines,
   Bot,
   Save,
@@ -21,42 +19,49 @@ import {
   Copy,
 } from "lucide-react";
 
-/**
- * 说明：
- * 1) 这是一个“可运行的前端 MVP 原型”，重点在工作流与信息结构。
- * 2) 浏览器环境下：
- *    - 麦克风采集：可行
- *    - 屏幕/标签页音频采集：可通过 getDisplayMedia(audio:true) 尝试
- *    - 真正稳定的“系统内部音频 + 外部音频混合 + 高质量转写”更适合 Electron / 桌面端实现
- * 3) 转写：
- *    - 优先尝试浏览器 SpeechRecognition（若可用）
- *    - 不可用时退化为“原型模式”，仍可完整跑通流程、记笔记、生成报告
- * 4) AI总结：
- *    - 支持 OpenAI 风格接口调用
- *    - 需要用户填写 Base URL / API Key / Model
- */
-
-const STORAGE_KEY = "meeting_transcription_mvp_v1";
+const STORAGE_KEY = "meeting_transcription_mvp_v2";
 const MODEL_KEY = "meeting_transcription_model_config_v1";
 
 const templates = {
   concise: {
     label: "简洁纪要",
-    prompt: `你是一个专业会议纪要助手。请基于转写内容输出简洁会议纪要，包含：\n1. 会议主题概述\n2. 核心讨论内容\n3. 关键结论\n4. 待办事项\n5. 风险点/未决问题\n6. 下一步建议\n要求：语言简洁、条理清晰、避免冗余。`,
+    prompt: `你是一个专业会议纪要助手。请基于转写内容输出简洁会议纪要，包含：
+1. 会议主题概述
+2. 核心讨论内容
+3. 关键结论
+4. 待办事项
+5. 风险点/未决问题
+6. 下一步建议
+要求：语言简洁、条理清晰、避免冗余。`,
   },
   action: {
     label: "待办导向",
-    prompt: `你是一个擅长提取行动项的会议助理。请基于转写内容重点输出：\n1. 会议目标\n2. 已达成共识\n3. Action Items（事项/负责人/截止时间，若无法识别则标记“待确认”）\n4. 风险点\n5. 下一步推进建议\n要求：偏执行导向。`,
+    prompt: `你是一个擅长提取行动项的会议助理。请基于转写内容重点输出：
+1. 会议目标
+2. 已达成共识
+3. Action Items（事项/负责人/截止时间，若无法识别则标记“待确认”）
+4. 风险点
+5. 下一步推进建议
+要求：偏执行导向。`,
   },
   detailed: {
     label: "详细会议纪要",
-    prompt: `你是一个正式会议纪要撰写助手。请基于转写内容输出详细纪要，包含：\n1. 会议主题\n2. 参会内容概览\n3. 分议题讨论过程\n4. 关键结论\n5. 行动项\n6. 风险点/未决问题\n7. 后续建议\n要求：结构完整、表述专业。`,
+    prompt: `你是一个正式会议纪要撰写助手。请基于转写内容输出详细纪要，包含：
+1. 会议主题
+2. 参会内容概览
+3. 分议题讨论过程
+4. 关键结论
+5. 行动项
+6. 风险点/未决问题
+7. 后续建议
+要求：结构完整、表述专业。`,
   },
 };
 
 const initialSession = {
   title: "未命名会议",
   audioSource: "mic", // mic | system | mixed
+  language: "zh", // zh | en
   startedAt: null,
   endedAt: null,
   isRunning: false,
@@ -101,7 +106,8 @@ function segmentToText(segment) {
 }
 
 function buildTranscriptReport(session) {
-  return `# 转写报告\n\n` +
+  return (
+    `# 转写报告\n\n` +
     `- 会议标题：${session.title}\n` +
     `- 开始时间：${formatTime(session.startedAt)}\n` +
     `- 结束时间：${formatTime(session.endedAt)}\n` +
@@ -114,14 +120,17 @@ function buildTranscriptReport(session) {
     `\n\n## 个人笔记\n\n` +
     (session.notes.length
       ? session.notes.map((n) => `- [${n.time}] ${n.text}`).join("\n")
-      : "暂无个人笔记");
+      : "暂无个人笔记")
+  );
 }
 
 function buildSummaryReport(session) {
-  return `# AI 总结报告\n\n` +
+  return (
+    `# AI 总结报告\n\n` +
     `- 会议标题：${session.title}\n` +
     `- 模板：${templates[session.aiTemplate]?.label || "-"}\n\n` +
-    (session.aiSummary || "暂无 AI 总结内容");
+    (session.aiSummary || "暂无 AI 总结内容")
+  );
 }
 
 function audioSourceLabel(v) {
@@ -147,7 +156,13 @@ function statusPill(color, text) {
       }}
     >
       <span
-        style={{ width: 8, height: 8, borderRadius: 999, background: color, display: "inline-block" }}
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: 999,
+          background: color,
+          display: "inline-block",
+        }}
       />
       {text}
     </span>
@@ -157,25 +172,62 @@ function statusPill(color, text) {
 function App() {
   const [session, setSession] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : initialSession;
+    if (!saved) return initialSession;
+    try {
+      const parsed = JSON.parse(saved);
+      // 页面刷新后，如果上一次还在“录音中”，强制重置为已结束的空闲状态，避免残留状态混乱
+      if (parsed.isRunning) {
+        parsed.isRunning = false;
+        parsed.isPaused = false;
+        parsed.endedAt = parsed.endedAt || null;
+      }
+      return { ...initialSession, ...parsed };
+    } catch {
+      return initialSession;
+    }
   });
+
   const [modelConfig, setModelConfig] = useState(() => {
     const saved = localStorage.getItem(MODEL_KEY);
     return saved
       ? JSON.parse(saved)
       : { baseUrl: "", apiKey: "", model: "", systemPrompt: "" };
   });
-  const [newNote, setNewNote] = useState("");
-  const [connectState, setConnectState] = useState({ loading: false, ok: false, msg: "未校验" });
-  const [summaryState, setSummaryState] = useState({ loading: false, msg: "" });
-  const [captureState, setCaptureState] = useState({ mic: false, system: false, mode: "未开始" });
-  const [speechSupported, setSpeechSupported] = useState(false);
-  const [liveDraft, setLiveDraft] = useState("");
 
-  const recognitionRef = useRef(null);
+  const [newNote, setNewNote] = useState("");
+  const [connectState, setConnectState] = useState({
+    loading: false,
+    ok: false,
+    msg: "未校验",
+  });
+  const [summaryState, setSummaryState] = useState({
+    loading: false,
+    msg: "",
+  });
+  const [captureState, setCaptureState] = useState({
+    mic: false,
+    system: false,
+    mode: "未开始",
+  });
+  const [liveDraft, setLiveDraft] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+
   const timerRef = useRef(null);
   const segmentIdRef = useRef(1);
   const noteIdRef = useRef(1);
+
+  const micStreamRef = useRef(null);
+  const systemStreamRef = useRef(null);
+  const mixedAudioContextRef = useRef(null);
+  const mixedDestinationRef = useRef(null);
+  // 使用 WebAudio 抓取 PCM 并按时间切片打包 WAV，避免 MediaRecorder/webm 分片无法被后端解码的问题
+  const captureAudioContextRef = useRef(null);
+  const captureSourceRef = useRef(null);
+  const captureProcessorRef = useRef(null);
+  const captureBufferRef = useRef([]); // Float32Array chunks
+  const captureSampleRateRef = useRef(48000);
+  const captureFlushTimerRef = useRef(null);
+  const pausedRef = useRef(false);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
@@ -184,11 +236,6 @@ function App() {
   useEffect(() => {
     localStorage.setItem(MODEL_KEY, JSON.stringify(modelConfig));
   }, [modelConfig]);
-
-  useEffect(() => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    setSpeechSupported(Boolean(SR));
-  }, []);
 
   useEffect(() => {
     if (session.isRunning && !session.isPaused) {
@@ -206,14 +253,9 @@ function App() {
     [session.transcriptSegments]
   );
 
-  const pushSegment = (text, final = true) => {
+  const pushSegment = (text) => {
     if (!text?.trim()) return;
     const time = new Date().toLocaleTimeString();
-    if (!final) {
-      setLiveDraft(text);
-      return;
-    }
-    setLiveDraft("");
     setSession((prev) => ({
       ...prev,
       transcriptSegments: [
@@ -228,110 +270,393 @@ function App() {
     }));
   };
 
-  const startSpeechRecognition = () => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return;
-    const recognition = new SR();
-    recognition.lang = "zh-CN";
-    recognition.continuous = true;
-    recognition.interimResults = true;
+  const stopAllTracks = () => {
+    try {
+      micStreamRef.current?.getTracks?.().forEach((t) => t.stop());
+    } catch {}
+    try {
+      systemStreamRef.current?.getTracks?.().forEach((t) => t.stop());
+    } catch {}
+    try {
+      mixedAudioContextRef.current?.close?.();
+    } catch {}
+    try {
+      captureProcessorRef.current?.disconnect?.();
+    } catch {}
+    try {
+      captureSourceRef.current?.disconnect?.();
+    } catch {}
+    try {
+      captureAudioContextRef.current?.close?.();
+    } catch {}
+    try {
+      if (captureFlushTimerRef.current) clearInterval(captureFlushTimerRef.current);
+    } catch {}
 
-    recognition.onresult = (event) => {
-      let interim = "";
-      let finalText = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const text = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalText += text;
-        else interim += text;
-      }
-      if (interim) pushSegment(interim, false);
-      if (finalText) pushSegment(finalText, true);
-    };
-
-    recognition.onerror = () => {
-      setCaptureState((prev) => ({ ...prev, mode: "转写异常，已退回原型模式" }));
-    };
-
-    recognition.onend = () => {
-      if (session.isRunning && !session.isPaused) {
-        try {
-          recognition.start();
-        } catch {
-          // noop
-        }
-      }
-    };
-
-    recognitionRef.current = recognition;
-    recognition.start();
+    micStreamRef.current = null;
+    systemStreamRef.current = null;
+    mixedAudioContextRef.current = null;
+    mixedDestinationRef.current = null;
+    captureAudioContextRef.current = null;
+    captureSourceRef.current = null;
+    captureProcessorRef.current = null;
+    captureBufferRef.current = [];
+    pausedRef.current = false;
   };
 
-  const stopSpeechRecognition = () => {
+  const downsampleBuffer = (buffer, inputSampleRate, outputSampleRate) => {
+    if (outputSampleRate === inputSampleRate) return buffer;
+    const sampleRateRatio = inputSampleRate / outputSampleRate;
+    const newLength = Math.round(buffer.length / sampleRateRatio);
+    const result = new Float32Array(newLength);
+    let offsetResult = 0;
+    let offsetBuffer = 0;
+    while (offsetResult < result.length) {
+      const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+      // 简单平均降采样
+      let accum = 0;
+      let count = 0;
+      for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+        accum += buffer[i];
+        count++;
+      }
+      result[offsetResult] = count ? accum / count : 0;
+      offsetResult++;
+      offsetBuffer = nextOffsetBuffer;
+    }
+    return result;
+  };
+
+  const floatTo16BitPCM = (output, offset, input) => {
+    for (let i = 0; i < input.length; i++, offset += 2) {
+      let s = Math.max(-1, Math.min(1, input[i]));
+      s = s < 0 ? s * 0x8000 : s * 0x7fff;
+      output.setInt16(offset, s, true);
+    }
+  };
+
+  const writeString = (view, offset, string) => {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  };
+
+  const encodeWAV = (samples, sampleRate) => {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+
+    writeString(view, 0, "RIFF");
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeString(view, 8, "WAVE");
+    writeString(view, 12, "fmt ");
+    view.setUint32(16, 16, true); // PCM
+    view.setUint16(20, 1, true); // linear PCM
+    view.setUint16(22, 1, true); // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true); // byte rate (sampleRate * blockAlign)
+    view.setUint16(32, 2, true); // block align
+    view.setUint16(34, 16, true); // bits per sample
+    writeString(view, 36, "data");
+    view.setUint32(40, samples.length * 2, true);
+
+    floatTo16BitPCM(view, 44, samples);
+    return new Blob([view], { type: "audio/wav" });
+  };
+
+  const buildMixedStream = async () => {
+    let mic = false;
+    let system = false;
+
+    let micStream = null;
+    let systemStream = null;
+
+    if (session.audioSource === "mic" || session.audioSource === "mixed") {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mic = true;
+      micStreamRef.current = micStream;
+    }
+
+    if (session.audioSource === "system" || session.audioSource === "mixed") {
+      systemStream = await navigator.mediaDevices.getDisplayMedia({
+        audio: true,
+        video: true,
+      });
+      system = true;
+      systemStreamRef.current = systemStream;
+    }
+
+    if (session.audioSource === "mic" && micStream) {
+      setCaptureState({
+        mic: true,
+        system: false,
+        mode: "录音中（麦克风）",
+      });
+      return micStream;
+    }
+
+    if (session.audioSource === "system" && systemStream) {
+      setCaptureState({
+        mic: false,
+        system: true,
+        mode: "录音中（系统音频）",
+      });
+
+      const onlyAudioTracks = systemStream.getAudioTracks();
+      if (!onlyAudioTracks.length) {
+        throw new Error("未捕获到系统音频，请确认共享时勾选了系统音频");
+      }
+      return new MediaStream(onlyAudioTracks);
+    }
+
+    if (session.audioSource === "mixed" && micStream && systemStream) {
+      const audioContext = new AudioContext();
+      mixedAudioContextRef.current = audioContext;
+
+      const destination = audioContext.createMediaStreamDestination();
+      mixedDestinationRef.current = destination;
+
+      const micSource = audioContext.createMediaStreamSource(micStream);
+      micSource.connect(destination);
+
+      const systemAudioTracks = systemStream.getAudioTracks();
+      if (!systemAudioTracks.length) {
+        throw new Error("未捕获到系统音频，请确认共享时勾选了系统音频");
+      }
+
+      const systemOnlyStream = new MediaStream(systemAudioTracks);
+      const systemSource = audioContext.createMediaStreamSource(systemOnlyStream);
+      systemSource.connect(destination);
+
+      setCaptureState({
+        mic: true,
+        system: true,
+        mode: "录音中（混合音频）",
+      });
+
+      return destination.stream;
+    }
+
+    throw new Error("音频流初始化失败，请检查设备权限或输入源设置");
+  };
+
+  /**
+   * 将单个音频片段发送到后端进行转写，用于“准实时”分段转写。
+   * @param {Blob} chunkBlob - 单次录制得到的音频片段（WAV）
+   */
+  const sendChunkToBackend = async (chunkBlob) => {
     try {
-      recognitionRef.current?.stop?.();
-    } catch {
-      // noop
+      if (!chunkBlob || !chunkBlob.size) return;
+
+      setLiveDraft("正在上传当前音频片段并调用 Whisper 转写...");
+
+      const formData = new FormData();
+      formData.append("file", chunkBlob, "meeting_chunk.wav");
+      formData.append("language", session.language || "zh");
+
+      const res = await fetch("http://127.0.0.1:8000/transcribe", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`后端转写失败：${res.status} ${text}`);
+      }
+
+      const data = await res.json();
+      setLiveDraft("");
+
+      if (!data?.text?.trim()) {
+        // 不插入无效文本，保持时间线整洁
+        return;
+      }
+
+      pushSegment(data.text);
+    } catch (err) {
+      console.error("sendChunkToBackend error:", err);
+      setLiveDraft("");
+      setErrorMsg(err.message || "音频片段转写失败");
     }
   };
 
   const handleStart = async () => {
-    const startedAt = Date.now();
-    setSession((prev) => ({
-      ...prev,
-      startedAt,
-      endedAt: null,
-      isRunning: true,
-      isPaused: false,
-      aiSummary: "",
-    }));
+    setErrorMsg("");
+    setLiveDraft("");
 
-    // 原型层的设备状态展示
-    let mic = false;
-    let system = false;
-
-    if (session.audioSource === "mic" || session.audioSource === "mixed") {
-      try {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
-        mic = true;
-      } catch {
-        mic = false;
-      }
+    // 如果当前不是在进行中的会话，但已经有上一场的转写/笔记/总结，则本次“开始”视为新会议，先清空内容
+    if (
+      !session.isRunning &&
+      (session.transcriptSegments.length > 0 || session.notes.length > 0 || session.aiSummary)
+    ) {
+      setSession((prev) => ({
+        ...initialSession,
+        // 保留部分配置，方便连续开会
+        title: prev.title,
+        audioSource: prev.audioSource,
+        language: prev.language,
+        aiTemplate: prev.aiTemplate,
+      }));
+      // 重置段落/笔记 ID，避免 React key 重复
+      segmentIdRef.current = 1;
+      noteIdRef.current = 1;
     }
 
-    if (session.audioSource === "system" || session.audioSource === "mixed") {
-      try {
-        await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
-        system = true;
-      } catch {
-        system = false;
+    try {
+      if (!navigator.mediaDevices) {
+        throw new Error("当前浏览器不支持媒体设备采集");
       }
+      if (!window.MediaRecorder) {
+        // 不再依赖 MediaRecorder，保留此检查不作为阻断
+      }
+
+      const stream = await buildMixedStream();
+
+      // 使用 WebAudio 捕获 PCM -> 每 5 秒编码 WAV 发送到后端
+      captureBufferRef.current = [];
+      pausedRef.current = false;
+
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      captureAudioContextRef.current = audioContext;
+      captureSampleRateRef.current = audioContext.sampleRate || 48000;
+
+      const source = audioContext.createMediaStreamSource(stream);
+      captureSourceRef.current = source;
+
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      captureProcessorRef.current = processor;
+
+      processor.onaudioprocess = (e) => {
+        if (pausedRef.current) return;
+        const channelData = e.inputBuffer.getChannelData(0);
+        // 拷贝一份，避免后续 buffer 复用导致数据被覆盖
+        captureBufferRef.current.push(new Float32Array(channelData));
+      };
+
+      source.connect(processor);
+      // 连接到 destination 才会触发 onaudioprocess
+      processor.connect(audioContext.destination);
+
+      // 定时 flush：拼接 -> 降采样到 16k -> WAV -> 发送
+      if (captureFlushTimerRef.current) clearInterval(captureFlushTimerRef.current);
+      captureFlushTimerRef.current = setInterval(async () => {
+        try {
+          if (pausedRef.current) return;
+          const chunks = captureBufferRef.current;
+          if (!chunks.length) return;
+          captureBufferRef.current = [];
+
+          let total = 0;
+          for (const c of chunks) total += c.length;
+          const merged = new Float32Array(total);
+          let offset = 0;
+          for (const c of chunks) {
+            merged.set(c, offset);
+            offset += c.length;
+          }
+
+          const targetRate = 16000;
+          const down = downsampleBuffer(merged, captureSampleRateRef.current, targetRate);
+          const wavBlob = encodeWAV(down, targetRate);
+          await sendChunkToBackend(wavBlob);
+        } catch (err) {
+          console.error("flush chunk error:", err);
+        }
+      }, 5000);
+
+      const startedAt = Date.now();
+      setSession((prev) => ({
+        ...prev,
+        startedAt,
+        endedAt: null,
+        isRunning: true,
+        isPaused: false,
+        aiSummary: "",
+      }));
+    } catch (err) {
+      console.error("handleStart error:", err);
+      setErrorMsg(err.message || "启动录音失败");
+      stopAllTracks();
+      setCaptureState({ mic: false, system: false, mode: "启动失败" });
+      setSession((prev) => ({
+        ...prev,
+        isRunning: false,
+        isPaused: false,
+      }));
     }
-
-    setCaptureState({
-      mic,
-      system,
-      mode: speechSupported ? "实时转写中" : "原型模式运行中（当前浏览器未启用 SpeechRecognition）",
-    });
-
-    if (speechSupported) startSpeechRecognition();
   };
 
   const handlePause = () => {
-    setSession((prev) => ({ ...prev, isPaused: true }));
-    stopSpeechRecognition();
-    setCaptureState((prev) => ({ ...prev, mode: "已暂停" }));
+    setErrorMsg("");
+    try {
+      pausedRef.current = true;
+      setSession((prev) => ({ ...prev, isPaused: true }));
+      setCaptureState((prev) => ({ ...prev, mode: "已暂停" }));
+    } catch (err) {
+      console.error("handlePause error:", err);
+      setErrorMsg("暂停失败");
+    }
   };
 
   const handleResume = () => {
-    setSession((prev) => ({ ...prev, isPaused: false }));
-    if (speechSupported) startSpeechRecognition();
-    setCaptureState((prev) => ({ ...prev, mode: "实时转写中" }));
+    setErrorMsg("");
+    try {
+      pausedRef.current = false;
+      setSession((prev) => ({ ...prev, isPaused: false }));
+      setCaptureState((prev) => ({ ...prev, mode: "录音中" }));
+    } catch (err) {
+      console.error("handleResume error:", err);
+      setErrorMsg("继续失败");
+    }
   };
 
-  const handleStop = () => {
-    stopSpeechRecognition();
-    setSession((prev) => ({ ...prev, isRunning: false, isPaused: false, endedAt: Date.now() }));
-    setCaptureState((prev) => ({ ...prev, mode: "已结束" }));
+  const handleStop = async () => {
+    setErrorMsg("");
+
+    try {
+      setLiveDraft("录音结束。正在处理最后一段音频（如有）...");
+      pausedRef.current = true;
+
+      // 停止前做一次 flush，把缓冲区剩余音频发出去
+      const chunks = captureBufferRef.current;
+      captureBufferRef.current = [];
+      if (chunks.length) {
+        let total = 0;
+        for (const c of chunks) total += c.length;
+        const merged = new Float32Array(total);
+        let offset = 0;
+        for (const c of chunks) {
+          merged.set(c, offset);
+          offset += c.length;
+        }
+        const targetRate = 16000;
+        const down = downsampleBuffer(merged, captureSampleRateRef.current, targetRate);
+        const wavBlob = encodeWAV(down, targetRate);
+        await sendChunkToBackend(wavBlob);
+      }
+
+      setSession((prev) => ({
+        ...prev,
+        isRunning: false,
+        isPaused: false,
+        endedAt: Date.now(),
+      }));
+
+      setCaptureState((prev) => ({ ...prev, mode: "已结束" }));
+      stopAllTracks();
+      setLiveDraft("");
+    } catch (err) {
+      console.error("handleStop error:", err);
+      setErrorMsg(err.message || "结束转写失败");
+      setSession((prev) => ({
+        ...prev,
+        isRunning: false,
+            isPaused: false,
+            endedAt: Date.now(),
+          }));
+      setCaptureState((prev) => ({ ...prev, mode: "结束异常" }));
+      stopAllTracks();
+      setLiveDraft("");
+    }
   };
 
   const addNote = () => {
@@ -351,11 +676,17 @@ function App() {
   };
 
   const clearAll = () => {
-    stopSpeechRecognition();
+    stopAllTracks();
     localStorage.removeItem(STORAGE_KEY);
     setSession(initialSession);
     setLiveDraft("");
+    setErrorMsg("");
     setCaptureState({ mic: false, system: false, mode: "未开始" });
+    // 重置各种计数/缓冲
+    segmentIdRef.current = 1;
+    noteIdRef.current = 1;
+    captureBufferRef.current = [];
+    pausedRef.current = false;
   };
 
   const testConnection = async () => {
@@ -385,7 +716,11 @@ function App() {
       setConnectState({ loading: false, ok: true, msg: "连通性校验成功" });
       setSession((prev) => ({ ...prev, providerConnected: true }));
     } catch (e) {
-      setConnectState({ loading: false, ok: false, msg: `校验失败：${e.message}` });
+      setConnectState({
+        loading: false,
+        ok: false,
+        msg: `校验失败：${e.message}`,
+      });
       setSession((prev) => ({ ...prev, providerConnected: false }));
     }
   };
@@ -408,7 +743,10 @@ function App() {
         body: JSON.stringify({
           model: modelConfig.model,
           messages: [
-            { role: "system", content: modelConfig.systemPrompt || "你是一个专业会议总结助手。" },
+            {
+              role: "system",
+              content: modelConfig.systemPrompt || "你是一个专业会议总结助手。",
+            },
             { role: "user", content: prompt },
           ],
           temperature: 0.3,
@@ -448,7 +786,13 @@ function App() {
           'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }}
     >
-      <div style={{ width: "min(1440px, calc(100% - 32px))", margin: "0 auto", padding: "20px 0 32px" }}>
+      <div
+        style={{
+          width: "min(1440px, calc(100% - 32px))",
+          margin: "0 auto",
+          padding: "20px 0 32px",
+        }}
+      >
         <header
           style={{
             display: "flex",
@@ -475,26 +819,59 @@ function App() {
             >
               <Sparkles size={14} /> 实时会议转写与总结助手 MVP
             </div>
-            <h1 style={{ margin: "14px 0 8px", fontSize: "clamp(28px, 4vw, 42px)", lineHeight: 1.15 }}>
+            <h1
+              style={{
+                margin: "14px 0 8px",
+                fontSize: "clamp(28px, 4vw, 42px)",
+                lineHeight: 1.15,
+              }}
+            >
               实时转写 · 笔记 · 双报告输出
             </h1>
             <p style={{ margin: 0, color: theme.sub, lineHeight: 1.8 }}>
-              面向会议、课堂、访谈、线上通话的信息记录工具。当前版本重点验证核心 workflow：音频配置 → 实时转写 → 自动保存 → AI 总结 → 报告导出。
+              面向会议、课堂、访谈、线上通话的信息记录工具。当前版本重点验证核心 workflow：
+              音频配置 → 录音采集 → Whisper 转写 → AI 总结 → 报告导出。
             </p>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            {session.isRunning && !session.isPaused && statusPill("#16a34a", "转写中")}
+            {session.isRunning && !session.isPaused && statusPill("#16a34a", "录音中")}
             {session.isRunning && session.isPaused && statusPill("#d97706", "已暂停")}
             {!session.isRunning && statusPill("#64748b", "空闲")}
           </div>
         </header>
 
-        <div className="grid-root" style={{ display: "grid", gridTemplateColumns: "360px 1fr 360px", gap: 18 }}>
+        {errorMsg && (
+          <div
+            style={{
+              marginBottom: 16,
+              borderRadius: 16,
+              border: "1px solid rgba(220,38,38,0.16)",
+              background: "rgba(220,38,38,0.08)",
+              color: "#b91c1c",
+              padding: "12px 14px",
+              lineHeight: 1.7,
+              fontSize: 14,
+            }}
+          >
+            {errorMsg}
+          </div>
+        )}
+
+        <div
+          className="grid-root"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "360px 1fr 360px",
+            gap: 18,
+          }}
+        >
           <Panel title="会话配置" icon={<Settings size={18} />}>
             <Field label="会议标题">
               <input
                 value={session.title}
-                onChange={(e) => setSession((prev) => ({ ...prev, title: e.target.value }))}
+                onChange={(e) =>
+                  setSession((prev) => ({ ...prev, title: e.target.value }))
+                }
                 style={inputStyle}
                 placeholder="例如：项目周会 / 课程讨论 / 访谈记录"
               />
@@ -509,11 +886,19 @@ function App() {
                 ].map((item) => (
                   <button
                     key={item.key}
-                    onClick={() => setSession((prev) => ({ ...prev, audioSource: item.key }))}
+                    onClick={() =>
+                      setSession((prev) => ({ ...prev, audioSource: item.key }))
+                    }
                     style={{
                       ...selectorStyle,
-                      borderColor: session.audioSource === item.key ? "#0f172a" : "rgba(15,23,42,0.08)",
-                      background: session.audioSource === item.key ? "rgba(15,23,42,0.05)" : "#fff",
+                      borderColor:
+                        session.audioSource === item.key
+                          ? "#0f172a"
+                          : "rgba(15,23,42,0.08)",
+                      background:
+                        session.audioSource === item.key
+                          ? "rgba(15,23,42,0.05)"
+                          : "#fff",
                     }}
                   >
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -524,24 +909,52 @@ function App() {
               </div>
             </Field>
 
+            <Field label="转写语言">
+              <select
+                value={session.language}
+                onChange={(e) =>
+                  setSession((prev) => ({ ...prev, language: e.target.value }))
+                }
+                style={inputStyle}
+              >
+                <option value="zh">中文</option>
+                <option value="en">英文</option>
+              </select>
+            </Field>
+
             <Field label="当前采集状态">
               <div style={{ display: "grid", gap: 8 }}>
                 <InfoRow label="模式" value={captureState.mode} />
                 <InfoRow label="麦克风" value={captureState.mic ? "已连接" : "未连接 / 未启用"} />
                 <InfoRow label="系统音频" value={captureState.system ? "已连接" : "未连接 / 未启用"} />
-                <InfoRow label="浏览器识别" value={speechSupported ? "SpeechRecognition 可用" : "当前浏览器不可用"} />
+                <InfoRow
+                  label="转写方式"
+                  value="每约 5 秒打包一次音频片段（WAV），实时发送到 FastAPI + Whisper 转写"
+                />
               </div>
             </Field>
 
             <Field label="控制区">
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
-                <ActionButton disabled={session.isRunning} onClick={handleStart} icon={<Play size={16} />}>
+                <ActionButton
+                  disabled={session.isRunning}
+                  onClick={handleStart}
+                  icon={<Play size={16} />}
+                >
                   开始
                 </ActionButton>
-                <ActionButton disabled={!session.isRunning || session.isPaused} onClick={handlePause} icon={<Pause size={16} />}>
+                <ActionButton
+                  disabled={!session.isRunning || session.isPaused}
+                  onClick={handlePause}
+                  icon={<Pause size={16} />}
+                >
                   暂停
                 </ActionButton>
-                <ActionButton disabled={!session.isRunning || !session.isPaused} onClick={handleResume} icon={<Play size={16} />}>
+                <ActionButton
+                  disabled={!session.isRunning || !session.isPaused}
+                  onClick={handleResume}
+                  icon={<Play size={16} />}
+                >
                   继续
                 </ActionButton>
               </div>
@@ -590,24 +1003,28 @@ function App() {
                 {session.transcriptSegments.length === 0 && !liveDraft && (
                   <EmptyState
                     title="暂无转写内容"
-                    desc="开始会议后，转写结果会按时间顺序显示在这里。"
+                    desc="开始后会录制音频，结束时自动发送给后端 Whisper 转写。"
                   />
                 )}
 
                 {session.transcriptSegments.map((seg) => (
                   <div key={seg.id} style={segmentStyle}>
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-                      <span style={tinyPill("#334155", seg.time)} />
-                      <span style={tinyPill("#0369a1", seg.speaker || "说话人") } />
+                      {tinyPill("#334155", seg.time)}
+                      {tinyPill("#0369a1", seg.speaker || "说话人")}
                     </div>
                     <div style={{ lineHeight: 1.85, color: theme.text }}>{seg.text}</div>
                   </div>
                 ))}
 
                 {liveDraft && (
-                  <motion.div initial={{ opacity: 0.5 }} animate={{ opacity: 1 }} style={{ ...segmentStyle, borderStyle: "dashed" }}>
+                  <motion.div
+                    initial={{ opacity: 0.5 }}
+                    animate={{ opacity: 1 }}
+                    style={{ ...segmentStyle, borderStyle: "dashed" }}
+                  >
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-                      <span style={tinyPill("#d97706", "实时草稿") } />
+                      {tinyPill("#d97706", "处理中")}
                     </div>
                     <div style={{ lineHeight: 1.85, color: theme.sub }}>{liveDraft}</div>
                   </motion.div>
@@ -625,13 +1042,18 @@ function App() {
                   placeholder="记录你的想法、重点、疑问。保存后会自动绑定当前时间点。"
                 />
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <ActionButton onClick={addNote} icon={<Save size={16} />}>保存笔记</ActionButton>
+                  <ActionButton onClick={addNote} icon={<Save size={16} />}>
+                    保存笔记
+                  </ActionButton>
                 </div>
               </div>
 
               <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
                 {session.notes.length === 0 ? (
-                  <EmptyState title="暂无个人笔记" desc="会议过程中可随时记录个人想法，笔记不会污染原始转写。" />
+                  <EmptyState
+                    title="暂无个人笔记"
+                    desc="会议过程中可随时记录个人想法，笔记不会污染原始转写。"
+                  />
                 ) : (
                   session.notes.map((note) => (
                     <div key={note.id} style={segmentStyle}>
@@ -649,7 +1071,9 @@ function App() {
               <Field label="Base URL">
                 <input
                   value={modelConfig.baseUrl}
-                  onChange={(e) => setModelConfig((prev) => ({ ...prev, baseUrl: e.target.value }))}
+                  onChange={(e) =>
+                    setModelConfig((prev) => ({ ...prev, baseUrl: e.target.value }))
+                  }
                   style={inputStyle}
                   placeholder="例如：https://api.openai.com/v1"
                 />
@@ -658,7 +1082,9 @@ function App() {
                 <input
                   type="password"
                   value={modelConfig.apiKey}
-                  onChange={(e) => setModelConfig((prev) => ({ ...prev, apiKey: e.target.value }))}
+                  onChange={(e) =>
+                    setModelConfig((prev) => ({ ...prev, apiKey: e.target.value }))
+                  }
                   style={inputStyle}
                   placeholder="输入你的 API Key"
                 />
@@ -666,7 +1092,9 @@ function App() {
               <Field label="模型名称">
                 <input
                   value={modelConfig.model}
-                  onChange={(e) => setModelConfig((prev) => ({ ...prev, model: e.target.value }))}
+                  onChange={(e) =>
+                    setModelConfig((prev) => ({ ...prev, model: e.target.value }))
+                  }
                   style={inputStyle}
                   placeholder="例如：gpt-4o-mini / deepseek-chat"
                 />
@@ -675,7 +1103,12 @@ function App() {
                 <textarea
                   rows={3}
                   value={modelConfig.systemPrompt}
-                  onChange={(e) => setModelConfig((prev) => ({ ...prev, systemPrompt: e.target.value }))}
+                  onChange={(e) =>
+                    setModelConfig((prev) => ({
+                      ...prev,
+                      systemPrompt: e.target.value,
+                    }))
+                  }
                   style={{ ...inputStyle, resize: "vertical" }}
                   placeholder="例如：你是一个专业会议总结助手。"
                 />
@@ -685,7 +1118,14 @@ function App() {
                   {connectState.loading ? "校验中..." : "连通性校验"}
                 </ActionButton>
               </div>
-              <div style={{ marginTop: 12, color: connectState.ok ? "#15803d" : "#64748b", fontSize: 13, lineHeight: 1.7 }}>
+              <div
+                style={{
+                  marginTop: 12,
+                  color: connectState.ok ? "#15803d" : "#64748b",
+                  fontSize: 13,
+                  lineHeight: 1.7,
+                }}
+              >
                 {connectState.msg}
               </div>
             </Panel>
@@ -694,7 +1134,9 @@ function App() {
               <Field label="总结模板">
                 <select
                   value={session.aiTemplate}
-                  onChange={(e) => setSession((prev) => ({ ...prev, aiTemplate: e.target.value }))}
+                  onChange={(e) =>
+                    setSession((prev) => ({ ...prev, aiTemplate: e.target.value }))
+                  }
                   style={inputStyle}
                 >
                   {Object.entries(templates).map(([key, item]) => (
@@ -733,17 +1175,24 @@ function App() {
               >
                 {session.aiSummary || "尚未生成 AI 总结。"}
               </div>
-              <div style={{ marginTop: 10, fontSize: 13, color: theme.sub }}>{summaryState.msg}</div>
+              <div style={{ marginTop: 10, fontSize: 13, color: theme.sub }}>
+                {summaryState.msg}
+              </div>
             </Panel>
 
             <Panel title="报告导出" icon={<Download size={18} />}>
               <div style={{ display: "grid", gap: 10 }}>
                 <ActionButton
                   full
-                  onClick={() => downloadFile(`${session.title || "meeting"}_transcript.txt`, transcriptText || "暂无转写")}
+                  onClick={() =>
+                    downloadFile(
+                      `${session.title || "meeting"}_transcript.txt`,
+                      transcriptText || "暂无转写"
+                    )
+                  }
                   icon={<Download size={16} />}
                 >
-                  导出转写 TXT
+                  导出转写 TXT（仅内容）
                 </ActionButton>
                 <ActionButton
                   full
@@ -757,7 +1206,21 @@ function App() {
                   }
                   icon={<Download size={16} />}
                 >
-                  导出转写 Markdown
+                  导出转写 Markdown 报告
+                </ActionButton>
+                <ActionButton
+                  full
+                  subtle
+                  onClick={() =>
+                    downloadFile(
+                      `${session.title || "meeting"}_summary.txt`,
+                      buildSummaryReport(session),
+                      "text/plain;charset=utf-8"
+                    )
+                  }
+                  icon={<Download size={16} />}
+                >
+                  导出 AI 总结 TXT
                 </ActionButton>
                 <ActionButton
                   full
@@ -827,13 +1290,23 @@ function Panel({ title, icon, children }) {
 function Field({ label, children }) {
   return (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ marginBottom: 8, fontSize: 13, color: "#475569", fontWeight: 600 }}>{label}</div>
+      <div style={{ marginBottom: 8, fontSize: 13, color: "#475569", fontWeight: 600 }}>
+        {label}
+      </div>
       {children}
     </div>
   );
 }
 
-function ActionButton({ children, onClick, icon, full = false, subtle = false, danger = false, disabled = false }) {
+function ActionButton({
+  children,
+  onClick,
+  icon,
+  full = false,
+  subtle = false,
+  danger = false,
+  disabled = false,
+}) {
   const bg = danger ? "#dc2626" : subtle ? "#ffffff" : "#0f172a";
   const color = danger ? "#ffffff" : subtle ? "#0f172a" : "#ffffff";
   const border = subtle ? "1px solid rgba(15,23,42,0.08)" : "1px solid transparent";
